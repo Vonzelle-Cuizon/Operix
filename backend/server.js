@@ -48,13 +48,122 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
-const pool = require("./db"); // Your PostgreSQL connection
+const { pool, listenClient } = require("./db"); // Your PostgreSQL connection
 
 const app = express();
 
 // Middleware
 app.use(cors()); // optional if frontend served from same origin
 app.use(express.json());
+
+// --------------------
+// SSE (Server-Sent Events) for real-time updates
+// --------------------
+const clients = []; // Store connected SSE clients
+
+// Broadcast function to send updates to all connected clients
+function broadcastInventoryUpdate(data) {
+  const message = `event: inventory_update\ndata: ${JSON.stringify(data)}\n\n`;
+  clients.forEach((client) => {
+    try {
+      client.write(message);
+    } catch (err) {
+      console.error("Error sending SSE message:", err);
+    }
+  });
+}
+
+// SSE endpoint for clients to connect
+app.get("/events", (req, res) => {
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  // Store client connection
+  const clientId = Date.now();
+  clients.push(res);
+  console.log(`🔥 SSE client connected (ID: ${clientId}). Total clients: ${clients.length}`);
+
+  // Send initial connection message
+  res.write(`event: connected\ndata: ${JSON.stringify({ id: clientId, message: "Connected to inventory updates" })}\n\n`);
+
+  // Handle client disconnect
+  req.on("close", () => {
+    const index = clients.indexOf(res);
+    if (index > -1) {
+      clients.splice(index, 1);
+      console.log(`❌ SSE client disconnected (ID: ${clientId}). Remaining clients: ${clients.length}`);
+    }
+  });
+});
+
+// --------------------
+// PostgreSQL LISTEN/NOTIFY Setup
+// --------------------
+let notificationClient = null;
+
+async function setupPostgreSQLListen() {
+  try {
+    // Connect the listen client
+    await listenClient.connect();
+    console.log("📡 PostgreSQL LISTEN client connected");
+    
+    // Listen to the 'inventory_changes' channel
+    await listenClient.query("LISTEN inventory_changes");
+    console.log("📡 PostgreSQL LISTEN active on channel 'inventory_changes'");
+
+    // Handle notifications from PostgreSQL
+    listenClient.on("notification", (msg) => {
+      if (msg.channel === "inventory_changes") {
+        console.log("📨 Received PostgreSQL notification:", msg.payload);
+        try {
+          const data = JSON.parse(msg.payload);
+          // Broadcast to all SSE clients
+          broadcastInventoryUpdate(data);
+        } catch (err) {
+          console.error("Error parsing notification payload:", err);
+          // Still broadcast a generic update
+          broadcastInventoryUpdate({ 
+            updated: true, 
+            timestamp: new Date().toISOString(),
+            message: "Inventory updated"
+          });
+        }
+      }
+    });
+
+    // Handle connection errors
+    listenClient.on("error", (err) => {
+      console.error("❌ PostgreSQL notification client error:", err);
+      // Attempt to reconnect after a delay
+      setTimeout(setupPostgreSQLListen, 5000);
+    });
+
+  } catch (err) {
+    console.error("❌ Failed to setup PostgreSQL LISTEN:", err);
+    // Retry after 5 seconds
+    setTimeout(setupPostgreSQLListen, 5000);
+  }
+}
+
+// Initialize LISTEN on server start
+setupPostgreSQLListen();
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down gracefully...");
+  if (listenClient) {
+    try {
+      await listenClient.query("UNLISTEN inventory_changes");
+      await listenClient.end();
+    } catch (err) {
+      console.error("Error closing listen client:", err);
+    }
+  }
+  process.exit(0);
+});
 
 // --------------------
 // API routes
@@ -202,6 +311,16 @@ app.post("/api/inventory", async (req, res) => {
       WHERE ii.id = $1
     `, [result.rows[0].id]);
     
+    // Send PostgreSQL NOTIFY
+    await pool.query(
+      `SELECT pg_notify('inventory_changes', $1)`,
+      [JSON.stringify({ 
+        action: 'created', 
+        id: result.rows[0].id,
+        timestamp: new Date().toISOString()
+      })]
+    );
+    
     res.status(201).json(fullItem.rows[0]);
   } catch (err) {
     console.error("Database error:", err.message);
@@ -241,6 +360,16 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
       SET stock = $1 
       WHERE id = $2
     `, [newStock, id]);
+    
+    // Send PostgreSQL NOTIFY
+    await pool.query(
+      `SELECT pg_notify('inventory_changes', $1)`,
+      [JSON.stringify({ 
+        action: 'stock_reduced', 
+        id: parseInt(id),
+        timestamp: new Date().toISOString()
+      })]
+    );
     
     // Get the full updated item
     const fullItem = await pool.query(`
@@ -322,6 +451,16 @@ app.put("/api/inventory/:id", async (req, res) => {
     
     await pool.query(updateQuery, values);
     
+    // Send PostgreSQL NOTIFY
+    await pool.query(
+      `SELECT pg_notify('inventory_changes', $1)`,
+      [JSON.stringify({ 
+        action: 'updated', 
+        id: parseInt(id),
+        timestamp: new Date().toISOString()
+      })]
+    );
+    
     // Get the full updated item
     const fullItem = await pool.query(`
       SELECT 
@@ -367,6 +506,16 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
       SET status = 'Phased Out'
       WHERE id = $1
     `, [id]);
+    
+    // Send PostgreSQL NOTIFY
+    await pool.query(
+      `SELECT pg_notify('inventory_changes', $1)`,
+      [JSON.stringify({ 
+        action: 'phase_out', 
+        id: parseInt(id),
+        timestamp: new Date().toISOString()
+      })]
+    );
     
     // Get the full updated item
     const fullItem = await pool.query(`
@@ -417,6 +566,16 @@ app.delete("/api/inventory/:id", async (req, res) => {
     
     // Delete the item
     await pool.query(`DELETE FROM inventory_items WHERE id = $1`, [id]);
+    
+    // Send PostgreSQL NOTIFY
+    await pool.query(
+      `SELECT pg_notify('inventory_changes', $1)`,
+      [JSON.stringify({ 
+        action: 'deleted', 
+        id: parseInt(id),
+        timestamp: new Date().toISOString()
+      })]
+    );
     
     res.json({ message: "Item deleted successfully", id: parseInt(id) });
   } catch (err) {

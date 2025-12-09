@@ -56,6 +56,7 @@ export default function App() {
     total: inventory.length,
     available: inventory.filter((i) => i.status === "Available").length,
     low: inventory.filter((i) => i.status === "Low Stock").length,
+    outOfStock: inventory.filter((i) => i.status === "Out of Stock").length,
     restocking: inventory.filter((i) => i.status === "Restocking").length,
     phasedOut: inventory.filter((i) => i.status === "Phased Out").length,
   };
@@ -71,6 +72,7 @@ export default function App() {
         <div className="dashboard-card total">Total Materials: {stats.total}</div>
         <div className="dashboard-card available">Available: {stats.available}</div>
         <div className="dashboard-card low">Low Stock: {stats.low}</div>
+        <div className="dashboard-card outofstock">Out of Stock: {stats.outOfStock}</div>
         <div className="dashboard-card restocking">Restocking: {stats.restocking}</div>
         <div className="dashboard-card phased">Phased Out: {stats.phasedOut}</div>
       </div>
@@ -96,6 +98,7 @@ export default function App() {
           <option value="">Filter by Status</option>
           <option value="Available">Available</option>
           <option value="Low Stock">Low Stock</option>
+          <option value="Out of Stock">Out of Stock</option>
           <option value="Restocking">Restocking</option>
           <option value="Phased Out">Phased Out</option>
         </select>
@@ -128,10 +131,10 @@ export default function App() {
                 <td>{item.item_type}</td>
                 <td>{item.item_variant}</td>
                 <td>{item.stock}</td>
-                <td>{item.stock_unit_id}</td>
+                <td>{item.stock_unit}</td>
                 <td>{item.purchase_qty}</td>
                 <td>{item.purchase_unit}</td>
-                <td>{item.supplier_id}</td>
+                <td>{item.supplier || 'N/A'}</td>
 
                 <td>
                   <span className={`status-tag status-${item.status.toLowerCase().replace(" ", "")}`}>
