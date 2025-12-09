@@ -403,6 +403,34 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
   }
 });
 
+// Delete item
+app.delete("/api/inventory/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if item exists
+    const checkItem = await pool.query(`SELECT id FROM inventory_items WHERE id = $1`, [id]);
+    
+    if (checkItem.rows.length === 0) {
+      return res.status(404).json({ error: "Item not found" });
+    }
+    
+    // Delete the item
+    await pool.query(`DELETE FROM inventory_items WHERE id = $1`, [id]);
+    
+    res.json({ message: "Item deleted successfully", id: parseInt(id) });
+  } catch (err) {
+    console.error("Database error:", err.message);
+    res.status(500).json({ 
+      error: "Database error", 
+      message: err.message,
+      details: process.env.DATABASE_URL ? "Database URL is set" : "DATABASE_URL not found in .env file"
+    });
+  }
+});
+
+// Get item types (for dropdowns in modals)
+
 // Get item types (for dropdowns in modals)
 app.get("/api/item-types", async (req, res) => {
   try {
