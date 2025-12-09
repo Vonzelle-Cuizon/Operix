@@ -56,6 +56,28 @@ const app = express();
 app.use(cors()); // optional if frontend served from same origin
 app.use(express.json());
 
+// SSE connected clients
+const clients = [];
+
+function broadcastInventoryUpdate() {
+  clients.forEach((client) => {
+    client.write(`event: inventory_update\n`);
+    client.write(`data: ${JSON.stringify({ updated: true })}\n\n`);
+  });
+}
+
+
+
+(async () => {
+  try {
+    await pool.query("SELECT 1");
+    console.log("DB connection OK");
+  } catch (err) {
+    console.error("DB connection FAILED (startup check):", err); // prints full error/stack
+  }
+})();
+
+
 // --------------------
 // API routes
 // --------------------
@@ -88,7 +110,7 @@ app.get("/api/dashboard", async (req, res) => {
       phasedOut: parseInt(phasedOut.rows[0].count)
     });
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -120,7 +142,7 @@ app.get("/api/inventory", async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -157,8 +179,9 @@ app.get("/api/inventory/:id", async (req, res) => {
     }
     
     res.json(result.rows[0]);
+
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -203,8 +226,9 @@ app.post("/api/inventory", async (req, res) => {
     `, [result.rows[0].id]);
     
     res.status(201).json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -263,8 +287,10 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
     `, [id]);
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
+
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -347,8 +373,10 @@ app.put("/api/inventory/:id", async (req, res) => {
     }
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
+
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -393,8 +421,10 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
     }
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
+
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -409,7 +439,7 @@ app.get("/api/item-types", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM item_types ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -424,7 +454,7 @@ app.get("/api/stock-units", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM stock_units ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -439,7 +469,7 @@ app.get("/api/suppliers", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM suppliers ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -458,7 +488,7 @@ app.get("/api/db/inventory-items", async (req, res) => {
     const result = await pool.query(`SELECT * FROM inventory_items ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -473,7 +503,7 @@ app.get("/api/db/item-types", async (req, res) => {
     const result = await pool.query(`SELECT * FROM item_types ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -488,7 +518,7 @@ app.get("/api/db/stock-units", async (req, res) => {
     const result = await pool.query(`SELECT * FROM stock_units ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -503,7 +533,7 @@ app.get("/api/db/suppliers", async (req, res) => {
     const result = await pool.query(`SELECT * FROM suppliers ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -527,7 +557,7 @@ app.get("/api/db/all", async (req, res) => {
       suppliers: suppliers.rows
     });
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -535,6 +565,38 @@ app.get("/api/db/all", async (req, res) => {
     });
   }
 });
+
+
+
+// --------------------
+// SSE: Real-time events
+// --------------------
+app.get("/events", (req, res) => {
+  // Required headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  console.log("🔥 SSE client connected");
+
+  // Add this client to the list
+  clients.push(res);
+
+  // Ping to keep connection alive
+  const keepAlive = setInterval(() => {
+    res.write(":\n\n");
+  }, 20000);
+
+  // Remove client when closed
+  req.on("close", () => {
+    console.log("❌ SSE client disconnected");
+    clearInterval(keepAlive);
+    clients.splice(clients.indexOf(res), 1);
+  });
+});
+
+
 
 // --------------------
 // Serve React build (only if build directory exists)
@@ -561,3 +623,7 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
 );
+
+
+
+

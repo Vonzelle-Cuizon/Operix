@@ -5,7 +5,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch inventory from backend API
+    // Function to fetch inventory
     const fetchInventory = async () => {
       try {
         const response = await fetch("/api/inventory");
@@ -18,11 +18,22 @@ function App() {
       }
     };
 
+    // 1. Initial load
     fetchInventory();
 
-    // Optional: Poll every 10 seconds for live updates
-    const interval = setInterval(fetchInventory, 10000);
-    return () => clearInterval(interval);
+    // 2. Connect to SSE stream
+    const events = new EventSource("/events");
+
+    // When backend broadcasts "inventory_update", refresh data
+    events.addEventListener("inventory_update", () => {
+      console.log("🔄 Inventory update received (SSE)");
+      fetchInventory();
+    });
+
+    // Cleanup connection when component unmounts
+    return () => {
+      events.close();
+    };
   }, []);
 
   if (loading) return <p>Loading inventory...</p>;
