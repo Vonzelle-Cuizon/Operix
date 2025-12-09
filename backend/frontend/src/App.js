@@ -1,63 +1,169 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import AddItemModal from "./components/AddItemModel";
+import EditItemModal from "./components/EditItemModel";
+import "./App.css"; // You'll create this for styling
 
-function App() {
+export default function App() {
   const [inventory, setInventory] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [filteredInventory, setFilteredInventory] = useState([]);
+
+  const [selectedType, setSelectedType] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+
+  // Fetch inventory
+  const fetchInventory = async () => {
+    const res = await fetch("http://localhost:5000/api/inventory");
+    const data = await res.json();
+    setInventory(data);
+    setFilteredInventory(data);
+  };
 
   useEffect(() => {
-    // Fetch inventory from backend API
-    const fetchInventory = async () => {
-      try {
-        const response = await fetch("/api/inventory");
-        const data = await response.json();
-        setInventory(data);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching inventory:", err);
-        setLoading(false);
-      }
-    };
-
     fetchInventory();
-
-    // Optional: Poll every 10 seconds for live updates
-    const interval = setInterval(fetchInventory, 10000);
-    return () => clearInterval(interval);
   }, []);
 
-  if (loading) return <p>Loading inventory...</p>;
+  // Filter logic
+  useEffect(() => {
+    let list = [...inventory];
+
+    if (selectedType) {
+      list = list.filter((i) => i.item_type === selectedType);
+    }
+
+    if (selectedStatus) {
+      list = list.filter((i) => i.status === selectedStatus);
+    }
+
+    setFilteredInventory(list);
+  }, [selectedType, selectedStatus, inventory]);
+
+  // Delete handler
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this item?")) return;
+
+    await fetch(`http://localhost:5000/api/inventory/${id}`, {
+      method: "DELETE",
+    });
+
+    fetchInventory();
+  };
+
+  // Dashboard stats
+  const stats = {
+    total: inventory.length,
+    available: inventory.filter((i) => i.status === "Available").length,
+    low: inventory.filter((i) => i.status === "Low Stock").length,
+    restocking: inventory.filter((i) => i.status === "Restocking").length,
+    phasedOut: inventory.filter((i) => i.status === "Phased Out").length,
+  };
+
+  // Unique types for dropdown
+  const itemTypes = [...new Set(inventory.map((i) => i.item_type))];
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Inventory</h1>
-      <table border="1" cellPadding="10">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Item Type</th>
-            <th>Item Variant</th>
-            <th>Stock</th>
-            <th>Stock Unit</th>
-            <th>Supplier</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {inventory.map((item) => (
-            <tr key={item.id}>
-              <td>{item.id}</td>
-              <td>{item.item_type}</td>
-              <td>{item.item_variant}</td>
-              <td>{item.stock}</td>
-              <td>{item.stock_unit}</td>
-              <td>{item.supplier}</td>
-              <td>{item.status}</td>
-            </tr>
+    <div className="app-container">
+
+      {/* Dashboard Cards */}
+      <div className="dashboard">
+        <div className="dashboard-card total">Total Materials: {stats.total}</div>
+        <div className="dashboard-card available">Available: {stats.available}</div>
+        <div className="dashboard-card low">Low Stock: {stats.low}</div>
+        <div className="dashboard-card restocking">Restocking: {stats.restocking}</div>
+        <div className="dashboard-card phased">Phased Out: {stats.phasedOut}</div>
+      </div>
+
+      {/* Filters + Add Button */}
+      <div className="top-bar">
+        <select
+          value={selectedType}
+          onChange={(e) => setSelectedType(e.target.value)}
+          className="filter-select"
+        >
+          <option value="">Filter by Type</option>
+          {itemTypes.map((t) => (
+            <option key={t} value={t}>{t}</option>
           ))}
-        </tbody>
-      </table>
+        </select>
+
+        <select
+          value={selectedStatus}
+          onChange={(e) => setSelectedStatus(e.target.value)}
+          className="filter-select"
+        >
+          <option value="">Filter by Status</option>
+          <option value="Available">Available</option>
+          <option value="Low Stock">Low Stock</option>
+          <option value="Restocking">Restocking</option>
+          <option value="Phased Out">Phased Out</option>
+        </select>
+
+        <button className="add-btn" onClick={() => setShowAdd(true)}>
+          + Add Item
+        </button>
+      </div>
+
+      {/* Inventory Table */}
+      <div className="table-container">
+        <table className="inventory-table">
+          <thead>
+            <tr>
+              <th>Item Type</th>
+              <th>Item Variant</th>
+              <th>Usable Stocks</th>
+              <th>Stock Unit</th>
+              <th>Purchase QTY</th>
+              <th>Purchase Unit</th>
+              <th>Supplier</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {filteredInventory.map((item) => (
+              <tr key={item.id}>
+                <td>{item.item_type}</td>
+                <td>{item.item_variant}</td>
+                <td>{item.stock}</td>
+                <td>{item.stock_unit_id}</td>
+                <td>{item.purchase_qty}</td>
+                <td>{item.purchase_unit}</td>
+                <td>{item.supplier_id}</td>
+
+                <td>
+                  <span className={`status-tag status-${item.status.toLowerCase().replace(" ", "")}`}>
+                    {item.status}
+                  </span>
+                </td>
+
+                <td className="actions">
+                  <button className="edit-btn" onClick={() => setEditItem(item)}>✏</button>
+                  <button className="delete-btn" onClick={() => handleDelete(item.id)}>🗑</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modals */}
+      {showAdd && (
+        <AddItemModal
+          onClose={() => setShowAdd(false)}
+          onSaved={fetchInventory}
+        />
+      )}
+
+      {editItem && (
+        <EditItemModal
+          item={editItem}
+          onClose={() => setEditItem(null)}
+          onSaved={fetchInventory}
+        />
+      )}
     </div>
   );
 }
-
-export default App;
