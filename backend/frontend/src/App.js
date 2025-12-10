@@ -8,6 +8,7 @@ export default function App() {
   const [filteredInventory, setFilteredInventory] = useState([]);
   const [isAdminMode, setIsAdminMode] = useState(true); // Toggle between Admin and Production
 
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
 
@@ -41,20 +42,33 @@ export default function App() {
     };
   }, []);
 
-  // Filter logic
+  // Filter and search logic
   useEffect(() => {
     let list = [...inventory];
 
+    // Search filter - searches in item_type, item_variant, and supplier
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      list = list.filter((i) => {
+        const itemType = (i.item_type || "").toLowerCase();
+        const itemVariant = (i.item_variant || "").toLowerCase();
+        const supplier = (i.supplier || "").toLowerCase();
+        return itemType.includes(query) || itemVariant.includes(query) || supplier.includes(query);
+      });
+    }
+
+    // Type filter
     if (selectedType) {
       list = list.filter((i) => i.item_type === selectedType);
     }
 
+    // Status filter
     if (selectedStatus) {
       list = list.filter((i) => i.status === selectedStatus);
     }
 
     setFilteredInventory(list);
-  }, [selectedType, selectedStatus, inventory]);
+  }, [searchQuery, selectedType, selectedStatus, inventory]);
 
   // Delete handler
   const handleDelete = async (id) => {
@@ -168,8 +182,30 @@ export default function App() {
         <div className="dashboard-card phased">Phased Out: {stats.phasedOut}</div>
       </div>
 
-      {/* Filters + Add Button */}
+      {/* Search Bar + Filters + Add Button */}
       <div className="top-bar">
+        {/* Search Bar */}
+        <input
+          type="text"
+          placeholder="Search by type, variant, or supplier..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="search-input"
+          style={{
+            flex: "1",
+            maxWidth: "400px",
+            padding: "10px 15px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+            background: "white",
+            fontSize: "14px",
+            outline: "none",
+            transition: "border-color 0.2s"
+          }}
+          onFocus={(e) => e.target.style.borderColor = "#4b7bec"}
+          onBlur={(e) => e.target.style.borderColor = "#ccc"}
+        />
+
         <select
           value={selectedType}
           onChange={(e) => setSelectedType(e.target.value)}

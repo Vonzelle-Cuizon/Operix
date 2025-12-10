@@ -10,6 +10,67 @@
   display: flex;
   gap: 15px;
   margin-bottom: 25px;
+  flex-wrap: nowrap;
+}
+
+.dashboard-card {
+  flex: 1;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+/* Responsive: When screen shrinks, split to 2 rows with last 3 cards going under */
+@media (max-width: 1200px) {
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    flex-wrap: wrap;
+  }
+  
+  /* First 3 cards stay on first row */
+  .dashboard-card:nth-child(1),
+  .dashboard-card:nth-child(2),
+  .dashboard-card:nth-child(3) {
+    grid-row: 1;
+  }
+  
+  /* Last 3 cards go to second row */
+  .dashboard-card:nth-child(4),
+  .dashboard-card:nth-child(5),
+  .dashboard-card:nth-child(6) {
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .dashboard-card:nth-child(1),
+  .dashboard-card:nth-child(2) {
+    grid-row: 1;
+  }
+  
+  .dashboard-card:nth-child(3),
+  .dashboard-card:nth-child(4) {
+    grid-row: 2;
+  }
+  
+  .dashboard-card:nth-child(5),
+  .dashboard-card:nth-child(6) {
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+  }
+  
+  .dashboard-card {
+    grid-row: auto;
+  }
 }
 
 .dashboard-card {
