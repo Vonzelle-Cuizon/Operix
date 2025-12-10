@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import AddItemModal from "./components/AddItemModel";
 import EditItemModal from "./components/EditItemModel";
-import "./App.css"; // You'll create this for styling
+import "./App.css";
 
 export default function App() {
   const [inventory, setInventory] = useState([]);
   const [filteredInventory, setFilteredInventory] = useState([]);
+  const [isAdminMode, setIsAdminMode] = useState(true); // Toggle between Admin and Production
 
   const [selectedType, setSelectedType] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
@@ -15,14 +16,29 @@ export default function App() {
 
   // Fetch inventory
   const fetchInventory = async () => {
-    const res = await fetch("http://localhost:5000/api/inventory");
+    const res = await fetch("/api/inventory");
     const data = await res.json();
     setInventory(data);
     setFilteredInventory(data);
   };
 
   useEffect(() => {
+    // 1. Initial load
     fetchInventory();
+
+    // 2. Connect to SSE stream for real-time updates
+    const events = new EventSource("/events");
+
+    // When backend broadcasts "inventory_update", refresh data
+    events.addEventListener("inventory_update", () => {
+      console.log("🔄 Inventory update received (SSE)");
+      fetchInventory();
+    });
+
+    // Cleanup connection when component unmounts
+    return () => {
+      events.close();
+    };
   }, []);
 
   // Filter logic
@@ -44,7 +60,7 @@ export default function App() {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this item?")) return;
 
-    await fetch(`http://localhost:5000/api/inventory/${id}`, {
+    await fetch(`/api/inventory/${id}`, {
       method: "DELETE",
     });
 
@@ -66,6 +82,81 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Header with Logo and Toggle */}
+      <div style={{ 
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "center", 
+        marginBottom: "25px",
+        padding: "15px 20px",
+        background: "white",
+        borderRadius: "8px",
+        boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+      }}>
+        {/* Logo on the left */}
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <img 
+            src="/operix-logo.png" 
+            alt="OPERIX Logo" 
+            style={{ 
+              height: "60px", 
+              width: "auto",
+              objectFit: "contain"
+            }}
+          />
+        </div>
+
+        {/* Mode Toggle Switch on the right */}
+        <div style={{ 
+          display: "flex", 
+          alignItems: "center", 
+          gap: "10px" 
+        }}>
+          <span style={{ fontSize: "14px", fontWeight: "500", color: "#666" }}>
+            Production
+          </span>
+          <label style={{ 
+            position: "relative", 
+            display: "inline-block", 
+            width: "50px", 
+            height: "24px" 
+          }}>
+            <input
+              type="checkbox"
+              checked={isAdminMode}
+              onChange={(e) => setIsAdminMode(e.target.checked)}
+              style={{ opacity: 0, width: 0, height: 0 }}
+            />
+            <span style={{
+              position: "absolute",
+              cursor: "pointer",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: isAdminMode ? "#4b7bec" : "#ccc",
+              transition: "0.3s",
+              borderRadius: "24px"
+            }}>
+              <span style={{
+                position: "absolute",
+                content: '""',
+                height: "18px",
+                width: "18px",
+                left: isAdminMode ? "26px" : "3px",
+                bottom: "3px",
+                backgroundColor: "white",
+                transition: "0.3s",
+                borderRadius: "50%",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+              }} />
+            </span>
+          </label>
+          <span style={{ fontSize: "14px", fontWeight: "500", color: "#666" }}>
+            Admin
+          </span>
+        </div>
+      </div>
 
       {/* Dashboard Cards */}
       <div className="dashboard">
@@ -103,9 +194,11 @@ export default function App() {
           <option value="Phased Out">Phased Out</option>
         </select>
 
-        <button className="add-btn" onClick={() => setShowAdd(true)}>
-          + Add Item
-        </button>
+        {isAdminMode && (
+          <button className="add-btn" onClick={() => setShowAdd(true)}>
+            + Add Item
+          </button>
+        )}
       </div>
 
       {/* Inventory Table */}
@@ -117,8 +210,6 @@ export default function App() {
               <th>Item Variant</th>
               <th>Usable Stocks</th>
               <th>Stock Unit</th>
-              <th>Purchase QTY</th>
-              <th>Purchase Unit</th>
               <th>Supplier</th>
               <th>Status</th>
               <th>Actions</th>
@@ -132,8 +223,6 @@ export default function App() {
                 <td>{item.item_variant}</td>
                 <td>{item.stock}</td>
                 <td>{item.stock_unit}</td>
-                <td>{item.purchase_qty}</td>
-                <td>{item.purchase_unit}</td>
                 <td>{item.supplier || 'N/A'}</td>
 
                 <td>
@@ -144,7 +233,9 @@ export default function App() {
 
                 <td className="actions">
                   <button className="edit-btn" onClick={() => setEditItem(item)}>✏</button>
-                  <button className="delete-btn" onClick={() => handleDelete(item.id)}>🗑</button>
+                  {isAdminMode && (
+                    <button className="delete-btn" onClick={() => handleDelete(item.id)}>🗑</button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -165,6 +256,7 @@ export default function App() {
           item={editItem}
           onClose={() => setEditItem(null)}
           onSaved={fetchInventory}
+          isAdminMode={isAdminMode}
         />
       )}
     </div>

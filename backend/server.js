@@ -43,12 +43,11 @@
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 
-
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
-const { pool, listenClient } = require("./db"); // Your PostgreSQL connection
+const { pool } = require("./db"); // Your PostgreSQL connection
 
 const app = express();
 
@@ -56,114 +55,24 @@ const app = express();
 app.use(cors()); // optional if frontend served from same origin
 app.use(express.json());
 
-// --------------------
-// SSE (Server-Sent Events) for real-time updates
-// --------------------
-const clients = []; // Store connected SSE clients
+// SSE connected clients
+const clients = [];
 
-// Broadcast function to send updates to all connected clients
-function broadcastInventoryUpdate(data) {
-  const message = `event: inventory_update\ndata: ${JSON.stringify(data)}\n\n`;
+function broadcastInventoryUpdate() {
   clients.forEach((client) => {
-    try {
-      client.write(message);
-    } catch (err) {
-      console.error("Error sending SSE message:", err);
-    }
+    client.write(`event: inventory_update\n`);
+    client.write(`data: ${JSON.stringify({ updated: true })}\n\n`);
   });
 }
 
-// SSE endpoint for clients to connect
-app.get("/events", (req, res) => {
-  // Set SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-
-  // Store client connection
-  const clientId = Date.now();
-  clients.push(res);
-  console.log(`🔥 SSE client connected (ID: ${clientId}). Total clients: ${clients.length}`);
-
-  // Send initial connection message
-  res.write(`event: connected\ndata: ${JSON.stringify({ id: clientId, message: "Connected to inventory updates" })}\n\n`);
-
-  // Handle client disconnect
-  req.on("close", () => {
-    const index = clients.indexOf(res);
-    if (index > -1) {
-      clients.splice(index, 1);
-      console.log(`❌ SSE client disconnected (ID: ${clientId}). Remaining clients: ${clients.length}`);
-    }
-  });
-});
-
-// --------------------
-// PostgreSQL LISTEN/NOTIFY Setup
-// --------------------
-let notificationClient = null;
-
-async function setupPostgreSQLListen() {
+(async () => {
   try {
-    // Connect the listen client
-    await listenClient.connect();
-    console.log("📡 PostgreSQL LISTEN client connected");
-    
-    // Listen to the 'inventory_changes' channel
-    await listenClient.query("LISTEN inventory_changes");
-    console.log("📡 PostgreSQL LISTEN active on channel 'inventory_changes'");
-
-    // Handle notifications from PostgreSQL
-    listenClient.on("notification", (msg) => {
-      if (msg.channel === "inventory_changes") {
-        console.log("📨 Received PostgreSQL notification:", msg.payload);
-        try {
-          const data = JSON.parse(msg.payload);
-          // Broadcast to all SSE clients
-          broadcastInventoryUpdate(data);
-        } catch (err) {
-          console.error("Error parsing notification payload:", err);
-          // Still broadcast a generic update
-          broadcastInventoryUpdate({ 
-            updated: true, 
-            timestamp: new Date().toISOString(),
-            message: "Inventory updated"
-          });
-        }
-      }
-    });
-
-    // Handle connection errors
-    listenClient.on("error", (err) => {
-      console.error("❌ PostgreSQL notification client error:", err);
-      // Attempt to reconnect after a delay
-      setTimeout(setupPostgreSQLListen, 5000);
-    });
-
+    await pool.query("SELECT 1");
+    console.log("DB connection OK");
   } catch (err) {
-    console.error("❌ Failed to setup PostgreSQL LISTEN:", err);
-    // Retry after 5 seconds
-    setTimeout(setupPostgreSQLListen, 5000);
+    console.error("DB connection FAILED (startup check):", err); // prints full error/stack
   }
-}
-
-// Initialize LISTEN on server start
-setupPostgreSQLListen();
-
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("\n🛑 Shutting down gracefully...");
-  if (listenClient) {
-    try {
-      await listenClient.query("UNLISTEN inventory_changes");
-      await listenClient.end();
-    } catch (err) {
-      console.error("Error closing listen client:", err);
-    }
-  }
-  process.exit(0);
-});
+})();
 
 // --------------------
 // API routes
@@ -189,7 +98,6 @@ app.get("/api/dashboard", async (req, res) => {
     const phasedOut = await pool.query(`
       SELECT COUNT(*) as count FROM inventory_items WHERE status = 'Phased Out'
     `);
-
     res.json({
       totalItems: parseInt(totalItems.rows[0].count),
       lowStock: parseInt(lowStock.rows[0].count),
@@ -197,7 +105,7 @@ app.get("/api/dashboard", async (req, res) => {
       phasedOut: parseInt(phasedOut.rows[0].count)
     });
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -229,7 +137,7 @@ app.get("/api/inventory", async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -267,7 +175,7 @@ app.get("/api/inventory/:id", async (req, res) => {
     
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -311,19 +219,10 @@ app.post("/api/inventory", async (req, res) => {
       WHERE ii.id = $1
     `, [result.rows[0].id]);
     
-    // Send PostgreSQL NOTIFY
-    await pool.query(
-      `SELECT pg_notify('inventory_changes', $1)`,
-      [JSON.stringify({ 
-        action: 'created', 
-        id: result.rows[0].id,
-        timestamp: new Date().toISOString()
-      })]
-    );
-    
     res.status(201).json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -361,16 +260,6 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
       WHERE id = $2
     `, [newStock, id]);
     
-    // Send PostgreSQL NOTIFY
-    await pool.query(
-      `SELECT pg_notify('inventory_changes', $1)`,
-      [JSON.stringify({ 
-        action: 'stock_reduced', 
-        id: parseInt(id),
-        timestamp: new Date().toISOString()
-      })]
-    );
-    
     // Get the full updated item
     const fullItem = await pool.query(`
       SELECT 
@@ -392,8 +281,9 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
     `, [id]);
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -451,16 +341,6 @@ app.put("/api/inventory/:id", async (req, res) => {
     
     await pool.query(updateQuery, values);
     
-    // Send PostgreSQL NOTIFY
-    await pool.query(
-      `SELECT pg_notify('inventory_changes', $1)`,
-      [JSON.stringify({ 
-        action: 'updated', 
-        id: parseInt(id),
-        timestamp: new Date().toISOString()
-      })]
-    );
-    
     // Get the full updated item
     const fullItem = await pool.query(`
       SELECT 
@@ -486,8 +366,9 @@ app.put("/api/inventory/:id", async (req, res) => {
     }
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -507,16 +388,6 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
       WHERE id = $1
     `, [id]);
     
-    // Send PostgreSQL NOTIFY
-    await pool.query(
-      `SELECT pg_notify('inventory_changes', $1)`,
-      [JSON.stringify({ 
-        action: 'phase_out', 
-        id: parseInt(id),
-        timestamp: new Date().toISOString()
-      })]
-    );
-    
     // Get the full updated item
     const fullItem = await pool.query(`
       SELECT 
@@ -542,8 +413,9 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
     }
     
     res.json(fullItem.rows[0]);
+    broadcastInventoryUpdate();
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -551,44 +423,6 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
     });
   }
 });
-
-// Delete item
-app.delete("/api/inventory/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Check if item exists
-    const checkItem = await pool.query(`SELECT id FROM inventory_items WHERE id = $1`, [id]);
-    
-    if (checkItem.rows.length === 0) {
-      return res.status(404).json({ error: "Item not found" });
-    }
-    
-    // Delete the item
-    await pool.query(`DELETE FROM inventory_items WHERE id = $1`, [id]);
-    
-    // Send PostgreSQL NOTIFY
-    await pool.query(
-      `SELECT pg_notify('inventory_changes', $1)`,
-      [JSON.stringify({ 
-        action: 'deleted', 
-        id: parseInt(id),
-        timestamp: new Date().toISOString()
-      })]
-    );
-    
-    res.json({ message: "Item deleted successfully", id: parseInt(id) });
-  } catch (err) {
-    console.error("Database error:", err.message);
-    res.status(500).json({ 
-      error: "Database error", 
-      message: err.message,
-      details: process.env.DATABASE_URL ? "Database URL is set" : "DATABASE_URL not found in .env file"
-    });
-  }
-});
-
-// Get item types (for dropdowns in modals)
 
 // Get item types (for dropdowns in modals)
 app.get("/api/item-types", async (req, res) => {
@@ -596,7 +430,7 @@ app.get("/api/item-types", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM item_types ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -611,7 +445,7 @@ app.get("/api/stock-units", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM stock_units ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -626,7 +460,7 @@ app.get("/api/suppliers", async (req, res) => {
     const result = await pool.query(`SELECT id, name FROM suppliers ORDER BY name`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -645,7 +479,7 @@ app.get("/api/db/inventory-items", async (req, res) => {
     const result = await pool.query(`SELECT * FROM inventory_items ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -660,7 +494,7 @@ app.get("/api/db/item-types", async (req, res) => {
     const result = await pool.query(`SELECT * FROM item_types ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -675,7 +509,7 @@ app.get("/api/db/stock-units", async (req, res) => {
     const result = await pool.query(`SELECT * FROM stock_units ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -690,7 +524,7 @@ app.get("/api/db/suppliers", async (req, res) => {
     const result = await pool.query(`SELECT * FROM suppliers ORDER BY id`);
     res.json(result.rows);
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
@@ -714,13 +548,40 @@ app.get("/api/db/all", async (req, res) => {
       suppliers: suppliers.rows
     });
   } catch (err) {
-    console.error("Database error:", err.message);
+    console.error("Database error:", err);
     res.status(500).json({ 
       error: "Database error", 
       message: err.message,
       details: process.env.DATABASE_URL ? "Database URL is set" : "DATABASE_URL not found in .env file"
     });
   }
+});
+
+// --------------------
+// SSE: Real-time events
+// --------------------
+app.get("/events", (req, res) => {
+  // Required headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  console.log("🔥 SSE client connected");
+  
+  // Add this client to the list
+  clients.push(res);
+  
+  // Ping to keep connection alive
+  const keepAlive = setInterval(() => {
+    res.write(":\n\n");
+  }, 20000);
+  
+  // Remove client when closed
+  req.on("close", () => {
+    console.log("❌ SSE client disconnected");
+    clearInterval(keepAlive);
+    clients.splice(clients.indexOf(res), 1);
+  });
 });
 
 // --------------------
@@ -748,4 +609,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
 );
-

@@ -22,9 +22,9 @@ export default function AddItemModal({ onClose, onSaved }) {
     const loadData = async () => {
       try {
         const [typesRes, unitsRes, suppliersRes] = await Promise.all([
-          fetch("http://localhost:5000/api/item-types"),
-          fetch("http://localhost:5000/api/stock-units"),
-          fetch("http://localhost:5000/api/suppliers"),
+          fetch("/api/item-types"),
+          fetch("/api/stock-units"),
+          fetch("/api/suppliers"),
         ]);
 
         const [types, units, suppliers] = await Promise.all([
@@ -66,7 +66,7 @@ export default function AddItemModal({ onClose, onSaved }) {
     setError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/inventory", {
+      const response = await fetch("/api/inventory", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
