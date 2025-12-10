@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiEndpoint } from "../config";
 import "../App.css";
 
 export default function AddItemModal({ onClose, onSaved }) {
@@ -22,9 +23,9 @@ export default function AddItemModal({ onClose, onSaved }) {
     const loadData = async () => {
       try {
         const [typesRes, unitsRes, suppliersRes] = await Promise.all([
-          fetch("/api/item-types"),
-          fetch("/api/stock-units"),
-          fetch("/api/suppliers"),
+          fetch(apiEndpoint("/api/item-types")),
+          fetch(apiEndpoint("/api/stock-units")),
+          fetch(apiEndpoint("/api/suppliers")),
         ]);
 
         const [types, units, suppliers] = await Promise.all([
@@ -66,7 +67,7 @@ export default function AddItemModal({ onClose, onSaved }) {
     setError("");
 
     try {
-      const response = await fetch("/api/inventory", {
+      const response = await fetch(apiEndpoint("/api/inventory"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

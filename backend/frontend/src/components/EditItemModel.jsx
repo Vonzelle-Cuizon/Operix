@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiEndpoint } from "../config";
 import "../App.css";
 
 export default function EditItemModal({ item, onClose, onSaved, isAdminMode = true }) {
@@ -25,7 +26,7 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
     if (isAdminMode) {
       const loadData = async () => {
         try {
-          const unitsRes = await fetch("/api/stock-units");
+          const unitsRes = await fetch(apiEndpoint("/api/stock-units"));
         const units = await unitsRes.json();
         setStockUnits(units);
         } catch (err) {
@@ -85,7 +86,7 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
           requestBody.status = form.status;
         }
         
-        const response = await fetch(`/api/inventory/${item.id}`, {
+        const response = await fetch(apiEndpoint(`/api/inventory/${item.id}`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody),
@@ -130,7 +131,7 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
       setError("");
 
       try {
-        const response = await fetch(`/api/inventory/${item.id}/reduce-stock`, {
+        const response = await fetch(apiEndpoint(`/api/inventory/${item.id}/reduce-stock`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiEndpoint } from "../config";
 import "../App.css";
 
 export default function ReorderModal({ inventory, onClose, onSaved }) {
@@ -59,7 +60,7 @@ export default function ReorderModal({ inventory, onClose, onSaved }) {
       }
 
       // Use PUT endpoint to update stock
-      const response = await fetch(`/api/inventory/${selectedItemId}`, {
+      const response = await fetch(apiEndpoint(`/api/inventory/${selectedItemId}`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

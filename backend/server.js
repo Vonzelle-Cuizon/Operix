@@ -52,7 +52,16 @@ const { pool } = require("./db"); // Your PostgreSQL connection
 const app = express();
 
 // Middleware
-app.use(cors()); // optional if frontend served from same origin
+// CORS configuration - allow requests from Vercel frontend and localhost
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, or same-origin requests)
+    if (!origin) return callback(null, true);
+    // Allow all origins for now (you can restrict this later)
+    callback(null, true);
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 // SSE connected clients

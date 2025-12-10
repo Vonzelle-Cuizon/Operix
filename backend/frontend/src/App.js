@@ -3,6 +3,7 @@ import AddItemModal from "./components/AddItemModel";
 import EditItemModal from "./components/EditItemModel";
 import ItemDetailsModal from "./components/ItemDetailsModal";
 import ReorderModal from "./components/ReorderModal";
+import { apiEndpoint } from "./config";
 import "./App.css";
 
 export default function App() {
@@ -21,7 +22,7 @@ export default function App() {
 
   // Fetch inventory
   const fetchInventory = async () => {
-    const res = await fetch("/api/inventory");
+    const res = await fetch(apiEndpoint("/api/inventory"));
     const data = await res.json();
     setInventory(data);
     setFilteredInventory(data);
@@ -32,7 +33,7 @@ export default function App() {
     fetchInventory();
 
     // 2. Connect to SSE stream for real-time updates
-    const events = new EventSource("/events");
+    const events = new EventSource(apiEndpoint("/events"));
 
     // When backend broadcasts "inventory_update", refresh data
     events.addEventListener("inventory_update", () => {
@@ -78,7 +79,7 @@ export default function App() {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this item?")) return;
 
-    await fetch(`/api/inventory/${id}`, {
+    await fetch(apiEndpoint(`/api/inventory/${id}`), {
       method: "DELETE",
     });
 
