@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import AddItemModal from "./components/AddItemModel";
 import EditItemModal from "./components/EditItemModel";
+import ItemDetailsModal from "./components/ItemDetailsModal";
+import ReorderModal from "./components/ReorderModal";
 import "./App.css";
 
 export default function App() {
@@ -13,7 +15,9 @@ export default function App() {
   const [selectedStatus, setSelectedStatus] = useState("");
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showReorder, setShowReorder] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [detailsItem, setDetailsItem] = useState(null);
 
   // Fetch inventory
   const fetchInventory = async () => {
@@ -230,6 +234,9 @@ export default function App() {
           <option value="Phased Out">Phased Out</option>
         </select>
 
+        <button className="add-btn" onClick={() => setShowReorder(true)} style={{ background: "#20bf6b" }}>
+          📦 Reorder
+        </button>
         {isAdminMode && (
           <button className="add-btn" onClick={() => setShowAdd(true)}>
             + Add Item
@@ -268,6 +275,24 @@ export default function App() {
                 </td>
 
                 <td className="actions">
+                  <button 
+                    className="details-btn" 
+                    onClick={() => setDetailsItem(item)}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      fontSize: "18px",
+                      cursor: "pointer",
+                      padding: "5px",
+                      transition: "0.2s",
+                      color: "#4b7bec"
+                    }}
+                    onMouseOver={(e) => e.target.style.color = "#3867d6"}
+                    onMouseOut={(e) => e.target.style.color = "#4b7bec"}
+                    title="View Details"
+                  >
+                    👁️
+                  </button>
                   <button className="edit-btn" onClick={() => setEditItem(item)}>✏</button>
                   {isAdminMode && (
                     <button className="delete-btn" onClick={() => handleDelete(item.id)}>🗑</button>
@@ -293,6 +318,21 @@ export default function App() {
           onClose={() => setEditItem(null)}
           onSaved={fetchInventory}
           isAdminMode={isAdminMode}
+        />
+      )}
+
+      {detailsItem && (
+        <ItemDetailsModal
+          item={detailsItem}
+          onClose={() => setDetailsItem(null)}
+        />
+      )}
+
+      {showReorder && (
+        <ReorderModal
+          inventory={inventory}
+          onClose={() => setShowReorder(false)}
+          onSaved={fetchInventory}
         />
       )}
     </div>

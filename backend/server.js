@@ -65,6 +65,39 @@ function broadcastInventoryUpdate() {
   });
 }
 
+// Helper function to calculate status based on stock and reorder point
+function calculateStatus(stock, reorderPoint, currentStatus) {
+  // If already phased out, don't auto-update
+  if (currentStatus === 'Phased Out') {
+    return 'Phased Out';
+  }
+  
+  // Convert to numbers for comparison
+  const stockNum = parseFloat(stock) || 0;
+  const reorderNum = reorderPoint !== null && reorderPoint !== undefined ? parseFloat(reorderPoint) : null;
+  
+  // If reorder point is null or undefined, use default logic
+  if (reorderNum === null) {
+    if (stockNum > 0) {
+      return 'Available';
+    } else {
+      return 'Out of Stock';
+    }
+  }
+  
+  // Status logic based on stock vs reorder point
+  // 1. If stock > reorder point: Available
+  // 2. If stock <= reorder point but > 0: Low Stock
+  // 3. If stock = 0: Out of Stock
+  if (stockNum > reorderNum) {
+    return 'Available';
+  } else if (stockNum > 0 && stockNum <= reorderNum) {
+    return 'Low Stock';
+  } else {
+    return 'Out of Stock';
+  }
+}
+
 (async () => {
   try {
     await pool.query("SELECT 1");
@@ -128,7 +161,8 @@ app.get("/api/inventory", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id
@@ -161,7 +195,8 @@ app.get("/api/inventory/:id", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id
@@ -187,17 +222,24 @@ app.get("/api/inventory/:id", async (req, res) => {
 // Add new item
 app.post("/api/inventory", async (req, res) => {
   try {
-    const { item_type_id, item_variant, stock, stock_unit_id, supplier_id, status } = req.body;
+    const { item_type_id, item_variant, stock, stock_unit_id, supplier_id, status, reorder_point } = req.body;
     
     if (!item_type_id || !item_variant || stock === undefined || !stock_unit_id || !supplier_id) {
       return res.status(400).json({ error: "Missing required fields" });
     }
     
+    // Auto-calculate status if not provided (unless explicitly set to Phased Out or Restocking)
+    let finalStatus = status;
+    if (!status || (status !== 'Phased Out' && status !== 'Restocking')) {
+      finalStatus = calculateStatus(stock, reorder_point || null, status || 'Available');
+    }
+    
+    // Build INSERT query - handle reorder_point if it exists
     const result = await pool.query(`
-      INSERT INTO inventory_items (item_type_id, item_variant, stock, stock_unit_id, supplier_id, status)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO inventory_items (item_type_id, item_variant, stock, stock_unit_id, supplier_id, status, "reorder-point")
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
-    `, [item_type_id, item_variant, stock, stock_unit_id, supplier_id, status || 'Available']);
+    `, [item_type_id, item_variant, stock, stock_unit_id, supplier_id, finalStatus, reorder_point !== undefined ? reorder_point : null]);
     
     // Get the full item with joins
     const fullItem = await pool.query(`
@@ -211,7 +253,8 @@ app.post("/api/inventory", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id
@@ -241,9 +284,9 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
       return res.status(400).json({ error: "Invalid reduce amount" });
     }
     
-    // Get current stock
+    // Get current stock, reorder point, and status
     const currentItem = await pool.query(`
-      SELECT stock FROM inventory_items WHERE id = $1
+      SELECT stock, "reorder-point", status FROM inventory_items WHERE id = $1
     `, [id]);
     
     if (currentItem.rows.length === 0) {
@@ -251,14 +294,19 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
     }
     
     const currentStock = currentItem.rows[0].stock;
+    const reorderPoint = currentItem.rows[0]["reorder-point"];
+    const currentStatus = currentItem.rows[0].status;
     const newStock = Math.max(0, currentStock - reduceAmount);
     
-    // Update stock
+    // Calculate new status based on stock (unless phased out)
+    const newStatus = calculateStatus(newStock, reorderPoint, currentStatus);
+    
+    // Update stock and status
     await pool.query(`
       UPDATE inventory_items 
-      SET stock = $1 
-      WHERE id = $2
-    `, [newStock, id]);
+      SET stock = $1, status = $2
+      WHERE id = $3
+    `, [newStock, newStatus, id]);
     
     // Get the full updated item
     const fullItem = await pool.query(`
@@ -272,7 +320,8 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id
@@ -296,7 +345,21 @@ app.put("/api/inventory/:id/reduce-stock", async (req, res) => {
 app.put("/api/inventory/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { item_type_id, item_variant, stock, stock_unit_id, supplier_id, status } = req.body;
+    // Handle both reorder_point and "reorder-point" from request body
+    const { item_type_id, item_variant, stock, stock_unit_id, supplier_id, status, reorder_point, "reorder-point": reorderPointHyphen } = req.body;
+    const reorderPoint = reorder_point !== undefined ? reorder_point : reorderPointHyphen;
+    
+    // Get current item data first to check status
+    const currentItem = await pool.query(`
+      SELECT stock, "reorder-point", status FROM inventory_items WHERE id = $1
+    `, [id]);
+    
+    if (currentItem.rows.length === 0) {
+      return res.status(404).json({ error: "Item not found" });
+    }
+    
+    const currentStatus = currentItem.rows[0].status;
+    const isPhasedOut = currentStatus === 'Phased Out';
     
     // Build update query dynamically based on provided fields
     const updates = [];
@@ -311,9 +374,18 @@ app.put("/api/inventory/:id", async (req, res) => {
       updates.push(`item_variant = $${paramCount++}`);
       values.push(item_variant);
     }
+    
+    // Track if stock or reorder point changed (for auto-status calculation)
+    let stockChanged = false;
+    let reorderPointChanged = false;
+    let newStock = undefined;
+    let newReorderPoint = undefined;
+    
     if (stock !== undefined) {
       updates.push(`stock = $${paramCount++}`);
       values.push(stock);
+      newStock = parseFloat(stock);
+      stockChanged = true;
     }
     if (stock_unit_id !== undefined) {
       updates.push(`stock_unit_id = $${paramCount++}`);
@@ -323,9 +395,35 @@ app.put("/api/inventory/:id", async (req, res) => {
       updates.push(`supplier_id = $${paramCount++}`);
       values.push(supplier_id);
     }
-    if (status !== undefined) {
+    if (reorderPoint !== undefined) {
+      updates.push(`"reorder-point" = $${paramCount++}`);
+      values.push(reorderPoint !== null && reorderPoint !== '' ? parseInt(reorderPoint) : null);
+      newReorderPoint = reorderPoint !== null && reorderPoint !== '' ? parseInt(reorderPoint) : null;
+      reorderPointChanged = true;
+    }
+    
+    // Auto-calculate status if stock or reorder point changed
+    // Always auto-update status when stock/reorder_point changes, unless:
+    // 1. Current status is "Phased Out" (don't auto-update phased out items)
+    // 2. Status is explicitly set to "Phased Out" in this request (user wants to phase it out)
+    const shouldAutoCalculate = (stockChanged || reorderPointChanged) && 
+                                !isPhasedOut &&
+                                status !== 'Phased Out';
+    
+    if (shouldAutoCalculate) {
+      const stockToUse = newStock !== undefined ? newStock : currentItem.rows[0].stock;
+      const reorderPointToUse = newReorderPoint !== undefined ? newReorderPoint : currentItem.rows[0]["reorder-point"];
+      const autoStatus = calculateStatus(stockToUse, reorderPointToUse, currentStatus);
+      
+      // Always use auto-calculated status when stock/reorder_point changes
+      updates.push(`status = $${paramCount++}`);
+      values.push(autoStatus);
+      console.log("Auto-calculated status:", autoStatus, "for stock:", stockToUse, "reorder point:", reorderPointToUse);
+    } else if (status !== undefined && !shouldAutoCalculate) {
+      // Status was explicitly provided and we're not auto-calculating (e.g., setting to Phased Out)
       updates.push(`status = $${paramCount++}`);
       values.push(status);
+      console.log("Using manually set status:", status);
     }
     
     if (updates.length === 0) {
@@ -335,9 +433,14 @@ app.put("/api/inventory/:id", async (req, res) => {
     values.push(id);
     const updateQuery = `
       UPDATE inventory_items 
-      SET ${updates.join(', ')}
+      SET ${updates.join(', ')}, updated_at = NOW()
       WHERE id = $${paramCount}
     `;
+    
+    console.log("Update query:", updateQuery);
+    console.log("Update values:", values);
+    console.log("Stock changed:", stockChanged, "Reorder point changed:", reorderPointChanged);
+    console.log("Should auto-calculate:", shouldAutoCalculate);
     
     await pool.query(updateQuery, values);
     
@@ -353,7 +456,8 @@ app.put("/api/inventory/:id", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id
@@ -400,7 +504,8 @@ app.put("/api/inventory/:id/phase-out", async (req, res) => {
         su.id AS stock_unit_id,
         sp.name AS supplier,
         sp.id AS supplier_id,
-        ii.status
+        ii.status,
+        ii."reorder-point"
       FROM inventory_items ii
       LEFT JOIN item_types it ON it.id = ii.item_type_id
       LEFT JOIN stock_units su ON su.id = ii.stock_unit_id

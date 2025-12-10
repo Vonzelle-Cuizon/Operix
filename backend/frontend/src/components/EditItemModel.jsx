@@ -9,13 +9,16 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
     stock_unit_id: item.stock_unit_id || "",
     supplier_id: item.supplier_id || "",
     status: item.status || "Available",
-    reorder_point: item.reorder_point || "",
-    reorder_unit: item.reorder_unit || item.stock_unit || "",
+    reorder_point: (item["reorder-point"] !== null && item["reorder-point"] !== undefined) || (item.reorder_point !== null && item.reorder_point !== undefined)
+      ? (item["reorder-point"] !== undefined ? item["reorder-point"] : item.reorder_point)
+      : "",
+    reorder_unit: item.stock_unit || "",
   });
 
   const [stockUnits, setStockUnits] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [statusManuallyChanged, setStatusManuallyChanged] = useState(false);
 
   // Load dropdown data (only for admin mode)
   useEffect(() => {
@@ -38,6 +41,10 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
     setError("");
+    // Track if status was manually changed
+    if (e.target.name === "status") {
+      setStatusManuallyChanged(true);
+    }
   };
 
   const handleStockChange = (delta) => {
@@ -63,17 +70,25 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
       setError("");
 
       try {
+        // Build request body - only include status if it was manually changed
+        const requestBody = {
+          item_type_id: parseInt(form.item_type_id),
+          item_variant: form.item_variant,
+          stock: parseFloat(form.stock),
+          stock_unit_id: parseInt(form.stock_unit_id),
+          supplier_id: parseInt(form.supplier_id),
+          reorder_point: form.reorder_point ? parseInt(form.reorder_point) : null,
+        };
+        
+        // Only send status if it was manually changed (different from original)
+        if (statusManuallyChanged || form.status !== item.status) {
+          requestBody.status = form.status;
+        }
+        
         const response = await fetch(`/api/inventory/${item.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            item_type_id: parseInt(form.item_type_id),
-            item_variant: form.item_variant,
-            stock: parseFloat(form.stock),
-            stock_unit_id: parseInt(form.stock_unit_id),
-            supplier_id: parseInt(form.supplier_id),
-            status: form.status || "Available",
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
@@ -402,6 +417,82 @@ export default function EditItemModal({ item, onClose, onSaved, isAdminMode = tr
                   boxSizing: "border-box"
                 }}
               />
+            </div>
+
+            {/* Status */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", fontSize: "14px", color: "#2e2e2e" }}>
+                Status
+              </label>
+              <div style={{ position: "relative" }}>
+                <select
+                  name="status"
+                  value={form.status}
+                  onChange={handleChange}
+                  style={{ 
+                    width: "100%", 
+                    padding: "12px 35px 12px 12px", 
+                    fontSize: "16px", 
+                    borderRadius: "8px",
+                    border: "1px solid #ccc",
+                    boxSizing: "border-box",
+                    appearance: "none",
+                    backgroundImage: "url('data:image/svg+xml;charset=US-ASCII,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 4 5%22><path fill=%22%23666%22 d=%22M2 0L0 2h4zm0 5L0 3h4z%22/></svg>')",
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "right 12px center",
+                    backgroundSize: "12px"
+                  }}
+                >
+                  <option value="Available">Available</option>
+                  <option value="Low Stock">Low Stock</option>
+                  <option value="Out of Stock">Out of Stock</option>
+                  <option value="Restocking">Restocking</option>
+                  <option value="Phased Out">Phased Out</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Flag as Phased Out */}
+            <div style={{ 
+              marginBottom: "20px", 
+              padding: "15px", 
+              background: form.status === "Phased Out" ? "#ffe6e6" : "#f5f5f5",
+              borderRadius: "8px",
+              border: form.status === "Phased Out" ? "2px solid #eb3b5a" : "1px solid #e0e0e0"
+            }}>
+              <label style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "10px", 
+                cursor: "pointer",
+                fontWeight: "600",
+                fontSize: "14px",
+                color: "#2e2e2e"
+              }}>
+                <input
+                  type="checkbox"
+                  checked={form.status === "Phased Out"}
+                  onChange={(e) => {
+                    setForm({ ...form, status: e.target.checked ? "Phased Out" : "Available" });
+                  }}
+                  style={{
+                    width: "20px",
+                    height: "20px",
+                    cursor: "pointer"
+                  }}
+                />
+                <span>Flag item as Phased Out</span>
+              </label>
+              {form.status === "Phased Out" && (
+                <p style={{ 
+                  margin: "8px 0 0 30px", 
+                  fontSize: "12px", 
+                  color: "#666",
+                  fontStyle: "italic"
+                }}>
+                  This item will remain Phased Out until manually changed by admin.
+                </p>
+              )}
             </div>
           </>
         )}
