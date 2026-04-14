@@ -521,9 +521,9 @@ export const db = {
       const conversationsMap = new Map<string, any>();
 
       for (const msg of data as any[]) {
-        const isSender    = msg.sender_id === user.id;
+        const isSender = msg.sender_id === user.id;
         const otherProfile = isSender ? msg.receiver : msg.sender;
-        const otherId      = isSender ? msg.receiver_id : msg.sender_id;
+        const otherId = isSender ? msg.receiver_id : msg.sender_id;
 
         if (!otherId) continue;
         if (conversationsMap.has(otherId)) continue;
@@ -721,6 +721,17 @@ export const db = {
         .eq('payroll_period_id', periodId);
       if (error) throw error;
 
+      // Fetch existing records to preserve manual sss, philhealth, and hdmf entries
+      const { data: existingRecords } = await supabase
+        .from('payroll_records')
+        .select('employee_id, sss, philhealth, hdmf, cash_advance')
+        .eq('payroll_period_id', periodId);
+
+      const existingMap = new Map();
+      for (const rec of existingRecords || []) {
+        existingMap.set(rec.employee_id, rec);
+      }
+
       const results = [];
 
       for (const log of logs || []) {
@@ -728,7 +739,7 @@ export const db = {
         if (!emp) continue;
 
         const hourlyRate = Number(emp.base_hourly_rate) || 0;
-        const dailyRate  = hourlyRate * 8;
+        const dailyRate = hourlyRate * 8;
 
         const daysPresent = Number(log.worked_hours) > 0
           ? Math.round(Number(log.worked_hours) / 8)
@@ -751,53 +762,68 @@ export const db = {
           + specialOT
           + Number(log.additional_pay || 0);
 
-        const tardyDeductions    = hourlyRate * 0.5 * Number(log.late_timeslots || 0);
+        const tardyDeductions = hourlyRate * 0.5 * Number(log.late_timeslots || 0);
         const undertimeDeductions = hourlyRate * 0.5 * Number(log.early_leave_timeslots || 0);
 
+        const existing = existingMap.get(emp.id);
         const monthlyBasic = dailyRate * 26;
-        const philhealth   = Math.round(monthlyBasic * 0.015 / 5) * 5;
 
-        const hdmf = 200;
+        // Prioritize Supabase values if they exist
+        const philhealth = existing?.philhealth !== undefined && existing?.philhealth !== null
+          ? Number(existing.philhealth)
+          : Math.round(monthlyBasic * 0.015 / 5) * 5;
+
+        const hdmf = existing?.hdmf !== undefined && existing?.hdmf !== null
+          ? Number(existing.hdmf)
+          : 200;
+
+        const sss = existing?.sss !== undefined && existing?.sss !== null
+          ? Number(existing.sss)
+          : 0;
+
+        const cashAdvance = existing?.cash_advance !== undefined && existing?.cash_advance !== null
+          ? Number(existing.cash_advance)
+          : 0;
+
         const withholdingTax = 0;
-        const sss = 0;
-        const cashAdvance = 0;
 
         const totalDeductions = tardyDeductions
           + undertimeDeductions
           + withholdingTax
           + cashAdvance
           + philhealth
-          + hdmf;
+          + hdmf
+          + sss;
 
-        const netPay       = grossIncome - totalDeductions;
-        const taxableIncome = grossIncome - philhealth - hdmf;
+        const netPay = grossIncome - totalDeductions;
+        const taxableIncome = grossIncome - philhealth - hdmf - sss;
 
         const { data: saved, error: saveErr } = await supabase
           .from('payroll_records')
           .upsert([{
-            payroll_period_id:    periodId,
-            employee_id:          emp.id,
-            daily_rate:           dailyRate,
-            days_present:         daysPresent,
-            basic_pay:            basicPay,
-            regular_holiday_pay:  regularHolidayPay,
-            special_holiday_pay:  specialHolidayPay,
-            regular_overtime:     regularOT,
-            holiday_overtime:     holidayOT,
-            special_overtime:     specialOT,
-            gross_income:         grossIncome,
-            tardy_deductions:     tardyDeductions,
+            payroll_period_id: periodId,
+            employee_id: emp.id,
+            daily_rate: dailyRate,
+            days_present: daysPresent,
+            basic_pay: basicPay,
+            regular_holiday_pay: regularHolidayPay,
+            special_holiday_pay: specialHolidayPay,
+            regular_overtime: regularOT,
+            holiday_overtime: holidayOT,
+            special_overtime: specialOT,
+            gross_income: grossIncome,
+            tardy_deductions: tardyDeductions,
             undertime_deductions: undertimeDeductions,
             sss,
             philhealth,
             hdmf,
-            withholding_tax:      withholdingTax,
-            cash_advance:         cashAdvance,
-            total_deductions:     totalDeductions,
-            net_pay:              netPay,
-            taxable_income:       taxableIncome,
-            status:               'pending',
-            updated_at:           new Date().toISOString(),
+            withholding_tax: withholdingTax,
+            cash_advance: cashAdvance,
+            total_deductions: totalDeductions,
+            net_pay: netPay,
+            taxable_income: taxableIncome,
+            status: 'pending',
+            updated_at: new Date().toISOString(),
           }], { onConflict: 'employee_id,payroll_period_id' })
           .select().single();
 
@@ -825,7 +851,7 @@ export const db = {
         .order('created_at', { ascending: false });
 
       if (filters?.employee_id) query = query.eq('employee_id', filters.employee_id);
-      if (filters?.status)      query = query.eq('status', filters.status);
+      if (filters?.status) query = query.eq('status', filters.status);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -846,8 +872,8 @@ export const db = {
         .insert([{
           ...advance,
           date_issued: advance.date_issued || new Date().toISOString().split('T')[0],
-          status:      'pending',
-          issued_by:   user.id,
+          status: 'pending',
+          issued_by: user.id,
         }])
         .select(`
           *,
@@ -888,9 +914,9 @@ export const db = {
       const { data, error } = await supabase
         .from('cash_advances')
         .update({
-          status:         'declined',
+          status: 'declined',
           decline_reason: declineReason,
-          updated_at:     new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .eq('id', id)
         .eq('status', 'pending')
